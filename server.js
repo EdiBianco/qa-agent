@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
 
 const os = require('os');
+const updater = require('./lib/update');
 
 const PORT = Number(process.env.PORT) || 4747;
 const HOST = '127.0.0.1';
@@ -16,6 +17,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 const IS_WIN = process.platform === 'win32';
 const SKILL_DIR = path.join(__dirname, 'skill', 'qa-agent');
 const SETTINGS_FILE = path.join(DATA, 'settings.json');
+const SUPERVISED = process.env.QA_AGENT_SUPERVISED === '1'; // started by `qa-agent serve`, which restarts us after an update
 
 // Apps launched from Finder / a desktop entry get a minimal PATH; make sure `claude` is findable.
 if (!IS_WIN) {
@@ -331,6 +333,34 @@ for (const p of listProjects()) {
   }
 }
 
+// ---------- updates ----------
+let updateState = { current: updater.CURRENT, latest: null, tag: null, available: false, url: null, notes: '', checkedAt: 0, error: null, applying: false };
+const runningTasks = () => listProjects().flatMap((p) => listTasks(p.id)).filter((t) => t.status === 'running' || t.status === 'interactive').length;
+
+async function applyUpdate() {
+  if (updateState.applying) throw httpError(409, 'An update is already in progress');
+  const n = runningTasks();
+  if (n) throw httpError(409, `${n} task${n === 1 ? ' is' : 's are'} still running. Wait for ${n === 1 ? 'it' : 'them'} to finish, then update.`);
+  updateState.applying = true;
+  try {
+    const r = await updater.apply(updateState.tag);
+    if (SUPERVISED) setTimeout(() => process.exit(75), 500); // exit code 75 = "restart me" for the supervisor
+    return { ...r, restarting: SUPERVISED };
+  } catch (e) {
+    updateState.applying = false;
+    throw httpError(e.status || 500, e.message);
+  }
+}
+
+async function checkForUpdate() {
+  try { updateState = { ...updateState, ...(await updater.checkLatest()), checkedAt: Date.now(), error: null }; }
+  catch (e) { updateState = { ...updateState, checkedAt: Date.now(), error: e.message }; }
+  if (updateState.available && readSettings().autoUpdate && !updateState.applying && runningTasks() === 0) {
+    try { await applyUpdate(); } catch { /* the UI shows the reason the next time it is opened */ }
+  }
+  return updateState;
+}
+
 function startTask(p, body) {
   const lines = (s) => String(s || '').split('\n').map((x) => x.trim()).filter(Boolean);
   const instructions = String(body.instructions || '').trim();
@@ -390,10 +420,19 @@ async function api(req, res, url) {
       const body = await readBody(req);
       const next = readSettings();
       if (typeof body.onboarded === 'boolean') next.onboarded = body.onboarded;
+      if (typeof body.autoUpdate === 'boolean') next.autoUpdate = body.autoUpdate;
       writeJson(SETTINGS_FILE, next);
       return send(res, 200, next);
     }
   }
+  if (parts[0] === 'update' && !parts[1] && m === 'GET') {
+    if (url.searchParams.get('refresh') === '1' || Date.now() - updateState.checkedAt > 6 * 3600e3) await checkForUpdate();
+    return send(res, 200, {
+      ...updateState, readiness: await updater.readiness(), commands: updater.commandsFor(updateState.tag),
+      slug: updater.SLUG, platform: process.platform, supervised: SUPERVISED, autoUpdate: Boolean(readSettings().autoUpdate), runningTasks: runningTasks(),
+    });
+  }
+  if (parts[0] === 'update' && parts[1] === 'apply' && m === 'POST') return send(res, 200, { ok: true, ...(await applyUpdate()) });
   if (parts[0] === 'shutdown' && m === 'POST') {
     send(res, 200, { ok: true });
     setTimeout(() => process.exit(0), 150); // let the response flush; running tasks keep going and are reconciled on the next start
@@ -483,4 +522,4 @@ http.createServer(async (req, res) => {
   } catch (e) {
     send(res, e.status || 500, { error: e.message });
   }
-}).listen(PORT, HOST, () => { console.log(`QA Agent UI: http://localhost:${PORT}`); refreshStatus(); });
+}).listen(PORT, HOST, () => { console.log(`QA Agent UI: http://localhost:${PORT}`); refreshStatus(); checkForUpdate(); setInterval(checkForUpdate, 6 * 3600e3); });

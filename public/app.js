@@ -523,6 +523,7 @@ function renderConnPanel() {
   const el = $('#connPanel');
   if (el.hidden) return;
   el.innerHTML = `<h2>Connections</h2>${connRows()}
+    ${upd.info ? `<div class="conn-ver"><span>QA Agent v${esc(upd.info.current)}${upd.info.available ? ` · <b>v${esc(upd.info.latest)} available</b>` : ''}</span><button class="linkbtn" data-conn-act="update">${upd.info.available ? 'Update' : 'Check for updates'}</button></div>` : ''}
     <div class="conn-foot"><button class="btn ghost small" data-conn-act="recheck" ${conn.checking ? 'disabled' : ''}>${conn.checking ? 'Checking…' : 'Re-check'}</button><button class="btn ghost small" data-conn-act="welcome">Setup guide</button></div>`;
 }
 
@@ -538,12 +539,12 @@ $('#gear').addEventListener('click', (e) => { e.stopPropagation(); toggleConnPan
 $('#connPanel').addEventListener('click', (e) => {
   const b = e.target.closest('[data-conn-act]');
   if (!b) return;
-  if (b.dataset.connAct === 'welcome') { toggleConnPanel(false); openWelcome(); } else if (b.dataset.connAct === 'recheck') { conn.checking = true; renderConnPanel(); loadStatus(true); } else connAction(b.dataset.connAct, b);
+  if (b.dataset.connAct === 'update') { toggleConnPanel(false); openUpdate(true); } else if (b.dataset.connAct === 'welcome') { toggleConnPanel(false); openWelcome(); } else if (b.dataset.connAct === 'recheck') { conn.checking = true; renderConnPanel(); loadStatus(true); } else connAction(b.dataset.connAct, b);
 });
 document.addEventListener('click', (e) => { if (!$('#connPanel').hidden && !e.target.closest('#connPanel')) toggleConnPanel(false); });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (!$('#welcome').hidden) closeWelcome(); else if (!$('#connPanel').hidden) { toggleConnPanel(false); $('#gear').focus(); }
+  if (!$('#updateModal').hidden) closeUpdate(); else if (!$('#welcome').hidden) closeWelcome(); else if (!$('#connPanel').hidden) { toggleConnPanel(false); $('#gear').focus(); }
 });
 window.addEventListener('focus', () => { if (conn.loaded && connBad().length) loadStatus(true); }); // returning from a fix: re-check only when something was wrong
 
@@ -608,6 +609,133 @@ $('#welcome').addEventListener('keydown', (e) => { // keep Tab inside the dialog
   else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 });
 
+// ---------- updates ----------
+const upd = { info: null, busy: false, msg: '', result: null };
+const fmtWhen = (t) => (t ? new Date(t).toLocaleString() : 'never');
+
+async function loadUpdate(refresh) {
+  try { upd.info = await api(`/update${refresh ? '?refresh=1' : ''}`); } catch { return; }
+  renderUpdatePill();
+  renderUpdateModal();
+  renderConnPanel();
+}
+
+function renderUpdatePill() {
+  const b = $('#updatePill');
+  const i = upd.info;
+  b.hidden = !(i && i.available);
+  if (i && i.available) b.textContent = `Update to v${i.latest}`;
+}
+
+function renderUpdateModal() {
+  const el = $('#updateModal');
+  if (el.hidden) return;
+  const i = upd.info;
+  if (!i) { el.innerHTML = '<div class="modal-card"><h2 id="updateTitle">Checking for updates…</h2></div>'; return; }
+  const cmd = (label, text, key) => `<pre class="cmd">${esc(text)}</pre><button class="btn ghost small" data-upd="copy" data-key="${key}">Copy ${label}</button>`;
+  let body = '';
+  if (upd.result) {
+    const r = upd.result;
+    body = `<p class="lead">${r.restarting ? upd.msg || 'Restarting…' : `Updated to v${esc(r.version)}. Restart QA Agent to start using it.`}</p>
+      ${r.launcherChanged ? `<p class="hint">The launcher changed in this release. After restarting, run <code>node bin/qa-agent.js install</code> once more to refresh the app icon launcher.</p>` : ''}
+      ${r.skillRefreshed ? '<p class="hint">The installed Claude skill was refreshed too.</p>' : ''}`;
+  } else if (i.available) {
+    const can = i.readiness && i.readiness.ok;
+    const blocked = i.runningTasks > 0;
+    body = `<p class="lead">v${esc(i.current)} → <b>v${esc(i.latest)}</b> · ${i.publishedAt ? new Date(i.publishedAt).toLocaleDateString() : ''}</p>
+      ${i.notes ? `<pre class="log upd-notes">${esc(i.notes)}</pre>` : ''}
+      <div class="row">
+        <button class="btn" data-upd="apply" ${can && !blocked && !upd.busy ? '' : 'disabled'}>${upd.busy ? 'Updating…' : 'Update now'}</button>
+        ${i.url ? `<a class="chip" href="${esc(i.url)}" target="_blank" rel="noopener">View release on GitHub</a>` : ''}
+      </div>
+      ${can ? '' : `<p class="hint">Can't update in place: ${esc((i.readiness && i.readiness.reason) || 'unknown reason')} Use the command below.</p>`}
+      ${blocked ? `<p class="hint">${i.runningTasks} task${i.runningTasks === 1 ? ' is' : 's are'} still running. Wait for ${i.runningTasks === 1 ? 'it' : 'them'} to finish first.</p>` : ''}
+      ${i.supervised || !can ? '' : '<p class="hint">After updating, restart QA Agent (it was not started by a launcher, so it cannot restart itself).</p>'}
+      <div class="upd-sec"><h3>Or update from ${esc(i.commands.shell)}</h3>${cmd('command', i.commands.git, 'git')}
+        <details class="upd-alt"><summary>No git on this computer?</summary>${cmd('command', i.commands.tarball, 'tarball')}</details>
+        <p class="hint">Then restart QA Agent. Your projects and history are kept.</p></div>`;
+  } else {
+    body = `<p class="lead">You have the latest version (v${esc(i.current)}).</p>`;
+  }
+  el.innerHTML = `<div class="modal-card">
+    <h2 id="updateTitle">${i.available && !upd.result ? 'Update available' : upd.result ? 'Update installed' : 'QA Agent is up to date'}</h2>
+    ${i.error ? `<p class="err">Could not reach GitHub: ${esc(i.error)}</p>` : ''}
+    ${body}
+    <label class="switch" for="autoUpd" style="margin-top:16px"><input type="checkbox" id="autoUpd" role="switch" ${i.autoUpdate ? 'checked' : ''}><span class="track" aria-hidden="true"></span><span><strong>Install updates automatically</strong><span class="hint" style="display:block">When no tasks are running. Downloads and runs new code from github.com/${esc(i.slug || '')}.</span></span></label>
+    <div class="modal-foot"><span class="hint">Checked ${esc(fmtWhen(i.checkedAt))}</span><span><button class="btn ghost small" data-upd="check">Check again</button> <button class="btn small" data-upd="close">Close</button></span></div></div>`;
+}
+
+let updReturnFocus = null;
+function openUpdate(refresh) {
+  updReturnFocus = document.activeElement;
+  $('#updateModal').hidden = false;
+  renderUpdateModal();
+  loadUpdate(Boolean(refresh));
+  const first = $('#updateModal button:not([disabled])');
+  if (first) first.focus();
+}
+function closeUpdate() {
+  $('#updateModal').hidden = true;
+  if (updReturnFocus && updReturnFocus.focus) updReturnFocus.focus();
+}
+
+async function applyUpdateNow() {
+  upd.busy = true; upd.msg = ''; renderUpdateModal();
+  try {
+    const r = await api('/update/apply', { method: 'POST' });
+    upd.result = r; upd.busy = false; upd.msg = 'Restarting…';
+    renderUpdateModal();
+    if (r.restarting) waitForRestart(r.version);
+  } catch (e) {
+    upd.busy = false;
+    toast(e.message);
+    renderUpdateModal();
+  }
+}
+
+async function waitForRestart(target) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < 90000) {
+    await new Promise((r) => setTimeout(r, 1000));
+    try { const i = await api('/update'); if (i.current === target) { location.reload(); return; } } catch { /* server is restarting */ }
+  }
+  upd.msg = 'The server did not come back. Start QA Agent again.';
+  renderUpdateModal();
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast('Copied'); } catch {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast('Copied'); } catch { toast('Select the command and copy it'); }
+    ta.remove();
+  }
+}
+
+$('#updatePill').addEventListener('click', () => openUpdate(false));
+$('#updateModal').addEventListener('click', async (e) => {
+  if (e.target === $('#updateModal')) return closeUpdate();
+  const b = e.target.closest('[data-upd]');
+  if (!b) return;
+  const a = b.dataset.upd;
+  if (a === 'close') closeUpdate();
+  else if (a === 'check') { upd.result = null; await loadUpdate(true); }
+  else if (a === 'apply') applyUpdateNow();
+  else if (a === 'copy') copyText(upd.info.commands[b.dataset.key]);
+});
+$('#updateModal').addEventListener('change', async (e) => {
+  if (e.target.id !== 'autoUpd') return;
+  try { await api('/settings', { method: 'PUT', body: { autoUpdate: e.target.checked } }); toast(e.target.checked ? 'Automatic updates on' : 'Automatic updates off'); } catch (err) { toast(err.message); }
+  loadUpdate(false);
+});
+$('#updateModal').addEventListener('keydown', (e) => { // keep Tab inside the dialog
+  if (e.key !== 'Tab') return;
+  const f = [...$('#updateModal').querySelectorAll('button:not([disabled]), a[href], input')];
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
+
 // ---------- boot ----------
 async function loadProjects() { state.projects = await api('/projects'); }
 (async () => {
@@ -618,5 +746,7 @@ async function loadProjects() { state.projects = await api('/projects'); }
   await loadTasks();
   renderAll();
   loadStatus(false);
+  loadUpdate(false);
+  setInterval(() => loadUpdate(false), 30 * 60 * 1000);
   try { if (!(await api('/settings')).onboarded) openWelcome(); } catch { /* ignore */ }
 })();

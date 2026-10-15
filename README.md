@@ -113,6 +113,30 @@ You also need access to the Jira project and, for private channels, an invite to
 
 Top right. Green dot: Claude, Jira and Slack are all connected. **Red dot**: one needs attention. Click it to see which, then *Sign in* / *Reconnect* and press *Re-check*. Connected items offer *Sign out* (Claude Code) or *Disconnect* (opens the connector settings where you can disconnect Jira or Slack). *Setup guide* reopens the welcome screen.
 
+## Updating
+
+QA Agent checks GitHub for a newer release when it starts and every 6 hours (no login needed, the repo is public). When there is one, an **Update to vX.Y.Z** pill appears in the top bar; the gear panel also shows the installed version with a *Check for updates* link.
+
+Click the pill to see the release notes, then:
+
+- **Update now**: fetches that release and fast-forwards your checkout to it, then restarts the server and reloads the page by itself (when it was started by a launcher or `qa-agent serve`; if you started it with plain `node server.js`, restart it yourself). Your projects and history are kept. It refuses when the install folder has local changes or tasks are running, and says why.
+- **Install updates automatically**: a switch in the same dialog. When on, new releases are applied as soon as they are found and no task is running. It downloads and runs new code from this repository, so leave it off unless you trust the source.
+- **A command for your system**: the dialog always shows it, with a *Copy* button.
+
+From a terminal: `node bin/qa-agent.js update` (or `update --check` to only look).
+
+| | Command (replace `<tag>` with the release, e.g. `v0.2.0`; the dialog fills it in) |
+|---|---|
+| macOS / Linux | `cd "<install folder>" && git fetch --tags --force && git merge --ff-only <tag>` |
+| Windows (PowerShell) | `cd "<install folder>"; git fetch --tags --force; git merge --ff-only <tag>` |
+| No git, macOS / Linux | `cd "<install folder>" && curl -fsSL https://github.com/EdiBianco/qa-agent/archive/refs/tags/<tag>.tar.gz \| tar -xz --strip-components=1` |
+| No git, Windows | `cd "<install folder>"; curl.exe -fsSL -o qa-agent-update.tgz https://github.com/EdiBianco/qa-agent/archive/refs/tags/<tag>.tar.gz; tar -xzf qa-agent-update.tgz --strip-components=1; Remove-Item qa-agent-update.tgz` |
+
+Then restart QA Agent. Notes:
+- If an update changes the launcher, the dialog says so; run `node bin/qa-agent.js install` once more to refresh the app icon launcher. The installed Claude skill (`install-skill`) is refreshed automatically.
+- Versions before 0.1.7 do not have this feature: update them once by hand with the command above (or `git pull`).
+- Running your own fork? Point `repository` in `package.json` at it, and updates will come from your releases.
+
 ## Using it
 
 1. Pick a project, or create one (*+ New project*).
@@ -151,6 +175,7 @@ It writes `findings.json`, `crawl.json`, and `summary.md`.
 | `PORT=5000` | change the port (default 4747) |
 | `QA_AGENT_DATA=/some/folder` | where projects, task history, and uploaded documents are stored (default `./data`) |
 | `data/server.log` | server log when started through a launcher |
+| `QA_AGENT_API=<url>` | GitHub API base used for update checks (GitHub Enterprise, tests) |
 | `node scripts/make-icons.js` | regenerate the icons in `assets/` |
 
 ## Troubleshooting
@@ -161,6 +186,7 @@ It writes `findings.json`, `crawl.json`, and `summary.md`.
 | Red dot, "Not signed in" | *Sign in* in the gear panel (or run `claude auth login`), then *Re-check*. |
 | Jira or Slack "Needs authentication" | *Reconnect* opens your Claude connector settings. Approve, then *Re-check*. |
 | Tasks run but nothing reaches Jira or Slack | You are on **Dry run**, or the connector is disconnected, or you lack access to the project or channel. |
+| "Can't update in place" | The install folder has local changes or was not installed with git. Use the command shown in the update dialog. |
 | Port already in use | Another copy is running (a launcher just opens the browser then). Use `PORT=5001 node server.js`. |
 | Windows shortcut does nothing | Your organisation may block PowerShell scripts; run `node server.js` instead. |
 

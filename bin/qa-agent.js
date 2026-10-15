@@ -3,6 +3,7 @@
 //   qa-agent serve [--open] [--parent <pid>]   start the server (if not running) and optionally open the browser;
 //                              with --parent, stop the server when that process disappears (used by the launchers)
 //   qa-agent stop              ask the running server to shut down
+//   qa-agent update [--check]  check GitHub for a newer release and update this checkout in place
 //   qa-agent install           add a launcher with an icon (macOS Dock / Windows tray / Linux desktop)
 //   qa-agent uninstall         remove it
 //   qa-agent install-skill     copy the qa-agent skill to ~/.claude/skills so any Claude Code session can use it
@@ -59,12 +60,17 @@ async function serve() {
   } else {
     fs.mkdirSync(DATA, { recursive: true });
     const out = fs.openSync(path.join(DATA, 'server.log'), 'a');
-    child = spawn(process.execPath, [path.join(ROOT, 'server.js')], { cwd: ROOT, stdio: ['ignore', out, out], env: process.env });
-    const stop = () => { child.kill('SIGTERM'); setTimeout(() => process.exit(0), 300); };
+    let stopping = false;
+    // The server exits with code 75 after applying an update; restart it so the new code is running.
+    const launch = () => {
+      child = spawn(process.execPath, [path.join(ROOT, 'server.js')], { cwd: ROOT, stdio: ['ignore', out, out], env: { ...process.env, QA_AGENT_SUPERVISED: '1' } });
+      child.on('exit', (code) => { if (code === 75 && !stopping) setTimeout(launch, 300); else process.exit(code ?? 0); });
+    };
+    launch();
+    const stop = () => { stopping = true; child.kill('SIGTERM'); setTimeout(() => process.exit(0), 300); };
     process.on('SIGTERM', stop);
     process.on('SIGINT', stop);
     process.on('SIGHUP', stop);
-    child.on('exit', (code) => process.exit(code ?? 0));
     for (let i = 0; i < 50 && !(await probe()); i++) await new Promise((r) => setTimeout(r, 200));
     console.log(`QA Agent running at ${URL_} (log: ${path.join(DATA, 'server.log')})`);
     if (flag('open')) openBrowser(URL_);
@@ -195,12 +201,32 @@ function installSkill() {
   console.log(`Installed skill to ${SKILL_DEST}\nStart a new Claude Code session and ask it to run QA, or use /qa-agent.`);
 }
 
+async function updateCmd() {
+  const u = require('../lib/update');
+  let r;
+  try { r = await u.checkLatest(); } catch (e) { return console.log(`Could not check for updates: ${e.message}`); }
+  console.log(`Installed: v${u.CURRENT}\nLatest:    ${r.tag || '(no release published)'}`);
+  if (!r.available) return console.log('You are up to date.');
+  if (flag('check')) return console.log(`Update available: ${r.url}\nRun: node bin/qa-agent.js update`);
+  const ready = await u.readiness();
+  if (!ready.ok) {
+    const c = u.commandsFor(r.tag);
+    return console.log(`Cannot update in place: ${ready.reason}\n\nRun this in ${c.shell}:\n  ${c.git}\n\nNo git? Use:\n  ${c.tarball}`);
+  }
+  const res = await u.apply(r.tag);
+  console.log(`Updated v${u.CURRENT} -> v${res.version}.`);
+  if (res.skillRefreshed) console.log('Refreshed the skill in ~/.claude/skills/qa-agent.');
+  if (res.launcherChanged) console.log('The launcher changed in this release: run  node bin/qa-agent.js install  again.');
+  console.log('Restart QA Agent to use the new version.');
+}
+
 (async () => {
   if (cmd === 'install-skill') return installSkill();
   if (cmd === 'uninstall-skill') { fs.rmSync(SKILL_DEST, { recursive: true, force: true }); return console.log(`Removed ${SKILL_DEST}`); }
-  if (cmd === 'stop') console.log((await shutdownServer()) ? `Stopped the server on port ${PORT}` : `No server running on port ${PORT}`);
+  if (cmd === 'update') await updateCmd();
+  else if (cmd === 'stop') console.log((await shutdownServer()) ? `Stopped the server on port ${PORT}` : `No server running on port ${PORT}`);
   else if (cmd === 'serve' || cmd === 'start') await serve();
   else if (cmd === 'install') install();
   else if (cmd === 'uninstall') uninstall();
-  else console.log('Usage: qa-agent <serve [--open] | stop | install [--dir <folder, macOS>] | uninstall | install-skill | uninstall-skill>');
+  else console.log('Usage: qa-agent <serve [--open] | stop | update [--check] | install [--dir <folder, macOS>] | uninstall | install-skill | uninstall-skill>');
 })().catch((e) => { console.error(e.message); process.exit(1); });
