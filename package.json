@@ -1,6 +1,6 @@
 {
   "name": "qa-agent-ui",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "description": "Autonomous QA projects, tasks and reporting to Jira and Slack, driven by Claude Code.",
   "bin": { "qa-agent": "bin/qa-agent.js" },

@@ -84,7 +84,15 @@ async function serve() {
 // ---------- install ----------
 const A = (f) => path.join(ROOT, 'assets', f);
 
-function macApp() { return path.join(opt('dir') || path.join(os.homedir(), 'Applications'), 'QA Agent.app'); }
+const MAC_SYSTEM_APPS = '/Applications';
+const MAC_USER_APPS = path.join(os.homedir(), 'Applications');
+const macAppAt = (dir) => path.join(dir, 'QA Agent.app');
+// /Applications (all users) when this account can write there (admin accounts can), else ~/Applications.
+function macTargetDir() {
+  if (opt('dir')) return opt('dir');
+  try { fs.accessSync(MAC_SYSTEM_APPS, fs.constants.W_OK); return MAC_SYSTEM_APPS; } catch { return MAC_USER_APPS; }
+}
+function macApp() { return macAppAt(macTargetDir()); }
 function linuxPaths() {
   const share = path.join(os.homedir(), '.local', 'share');
   return { desktop: path.join(share, 'applications', 'qa-agent.desktop'), icon: path.join(share, 'icons', 'hicolor', '256x256', 'apps', 'qa-agent.png'), onDesktop: path.join(os.homedir(), 'Desktop', 'QA Agent.desktop') };
@@ -94,6 +102,12 @@ function install() {
   const node = process.execPath;
   if (process.platform === 'darwin') {
     const app = macApp();
+    if (!opt('dir')) { // drop a copy from the other default location so there is only one icon
+      for (const dir of [MAC_SYSTEM_APPS, MAC_USER_APPS]) {
+        const other = macAppAt(dir);
+        if (other !== app && fs.existsSync(other)) { try { fs.rmSync(other, { recursive: true, force: true }); console.log(`Removed older copy ${other}`); } catch { console.log(`Could not remove ${other}; delete it manually`); } }
+      }
+    }
     const res = path.join(app, 'Contents', 'Resources');
     fs.rmSync(app, { recursive: true, force: true });
     fs.mkdirSync(path.join(app, 'Contents', 'MacOS'), { recursive: true });
@@ -117,7 +131,7 @@ function install() {
 <key>CFBundleVersion</key><string>1</string>
 </dict></plist>
 `);
-    console.log(`Installed ${app}\nOpen it from Finder/Launchpad/Spotlight. The icon appears in the Dock; right-click it and choose Quit (or press Cmd-Q) to stop the server.`);
+    console.log(`Installed ${app}\nOpen it from Launchpad, Spotlight or the Applications folder. The icon appears in the Dock; right-click it and choose Quit (or press Cmd-Q) to stop the server.${app.startsWith(MAC_USER_APPS) && !opt('dir') ? `\n(/Applications is not writable for this account, so it was installed for your user only. Use an administrator account to install it for everyone.)` : ''}`);
   } else if (process.platform === 'win32') {
     const script = `
 $ws = New-Object -ComObject WScript.Shell
@@ -159,7 +173,10 @@ StartupNotify=false
 }
 
 function uninstall() {
-  if (process.platform === 'darwin') { fs.rmSync(macApp(), { recursive: true, force: true }); console.log(`Removed ${macApp()}`); }
+  if (process.platform === 'darwin') {
+    const dirs = opt('dir') ? [opt('dir')] : [MAC_SYSTEM_APPS, MAC_USER_APPS];
+    for (const dir of dirs) { const app = macAppAt(dir); if (fs.existsSync(app)) { fs.rmSync(app, { recursive: true, force: true }); console.log(`Removed ${app}`); } }
+  }
   else if (process.platform === 'win32') {
     execFileSync('powershell.exe', ['-NoProfile', '-Command', `Remove-Item -ErrorAction SilentlyContinue ([IO.Path]::Combine([Environment]::GetFolderPath('Desktop'),'QA Agent.lnk')), ([IO.Path]::Combine([Environment]::GetFolderPath('Programs'),'QA Agent.lnk'))`], { stdio: 'inherit' });
     console.log('Removed QA Agent shortcuts');

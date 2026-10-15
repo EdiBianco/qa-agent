@@ -61,10 +61,10 @@ You need three things on any OS:
 brew install node git            # or install Node from https://nodejs.org
 git clone https://github.com/EdiBianco/qa-agent.git
 cd qa-agent
-node bin/qa-agent.js install     # adds "QA Agent" to ~/Applications (Dock icon)
-open ~/Applications/"QA Agent.app"
+node bin/qa-agent.js install     # adds "QA Agent" to /Applications (Dock icon)
+open /Applications/"QA Agent.app"
 ```
-Quit with Dock icon → right-click → *Quit* (or Cmd-Q); that stops the server.
+The app goes into `/Applications` (all users; this needs an administrator account, otherwise it falls back to `~/Applications`), and an older copy in the other location is removed. Quit with Dock icon → right-click → *Quit* (or Cmd-Q); that stops the server.
 
 ### Windows (PowerShell)
 
