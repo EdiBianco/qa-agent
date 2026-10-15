@@ -1,0 +1,6 @@
+data/
+workspaces/
+node_modules/
+.DS_Store
+.claude/
+.impeccable/

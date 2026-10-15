@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QA task result (written to <runDir>/result.json)",
+  "type": "object",
+  "required": ["summary", "counts", "findings", "jira", "slack", "blocked"],
+  "properties": {
+    "summary": { "type": "string", "description": "2-4 sentences: what was checked, what was found, what was reported" },
+    "counts": {
+      "type": "object",
+      "required": ["critical", "serious", "moderate", "minor"],
+      "properties": { "critical": { "type": "integer" }, "serious": { "type": "integer" }, "moderate": { "type": "integer" }, "minor": { "type": "integer" } }
+    },
+    "findings": { "type": "array", "items": { "$ref": "finding.schema.json" } },
+    "jira": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "key": { "type": "string" },
+          "url": { "type": "string" },
+          "status": { "enum": ["created", "updated", "reopened", "draft"] },
+          "draft": { "type": "object", "description": "for dry runs: project, type, summary, description, labels, priority" }
+        }
+      }
+    },
+    "slack": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "channel": { "type": "string" },
+          "url": { "type": "string" },
+          "status": { "enum": ["posted", "draft"] },
+          "draft": { "type": "string" }
+        }
+      }
+    },
+    "blocked": { "type": "array", "items": { "type": "string" }, "description": "anything you could not do and why" }
+  }
+}

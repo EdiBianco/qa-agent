@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QA finding",
+  "type": "object",
+  "required": ["rule", "severity", "category", "where", "evidence", "fix", "fingerprint"],
+  "properties": {
+    "rule": { "type": "string", "description": "axe-core rule id when one exists, otherwise short kebab-case" },
+    "severity": { "enum": ["critical", "serious", "moderate", "minor"] },
+    "category": { "enum": ["a11y", "seo", "links", "security", "performance", "content", "functional", "ai-output", "api", "billing"] },
+    "where": { "type": "string", "description": "URL or endpoint" },
+    "tag": { "type": "string", "description": "element tag or area, used in the fingerprint" },
+    "evidence": { "type": "string", "description": "what was observed, with concrete values" },
+    "fix": { "type": "string" },
+    "wcag": { "type": "string", "description": "WCAG success criteria, e.g. 1.3.1, 4.1.2" },
+    "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{10}$" }
+  }
+}
